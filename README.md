@@ -4,6 +4,8 @@ A decentralized NFT platform built on Stacks that enables musicians and artists 
 
 ## Features
 - Mint unique music/art NFTs with metadata
+- Create limited edition collections with maximum supply caps
+- Batch mint multiple NFTs efficiently
 - List NFTs for sale at fixed prices
 - Transfer NFTs between users
 - Royalty payments to original creators
@@ -17,8 +19,15 @@ A decentralized NFT platform built on Stacks that enables musicians and artists 
 
 ## Contract Interface
 
+### Collections
+- create-collection: Create a new limited edition collection
+- mint-collection-nft: Mint an NFT within a collection
+- get-collection: Get collection details
+- get-collection-tokens: Get tokens in a collection
+
 ### Minting
 - mint-nft: Create new NFT with metadata
+- batch-mint: Mint multiple NFTs in one transaction
 - get-token-uri: Get NFT metadata URI
 
 ### Trading

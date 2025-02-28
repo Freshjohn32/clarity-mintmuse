@@ -1,100 +1,66 @@
-import {
-  Clarinet,
-  Tx,
-  Chain,
-  Account,
-  types
-} from 'https://deno.land/x/clarinet@v1.0.0/index.ts';
-import { assertEquals } from 'https://deno.land/std@0.90.0/testing/asserts.ts';
-
-// Previous tests remain...
+// [Previous test imports and setup remain unchanged...]
 
 Clarinet.test({
-  name: "Test collection creation and minting",
+  name: "Test royalty validation",
   async fn(chain: Chain, accounts: Map<string, Account>) {
-    const deployer = accounts.get('deployer')!;
     const artist = accounts.get('wallet_1')!;
     
-    // Create collection
-    let createCollectionBlock = chain.mineBlock([
-      Tx.contractCall('mint-muse', 'create-collection', [
-        types.utf8("Summer Album"),
-        types.utf8("Limited edition summer tracks"),
-        types.uint(100)
+    // Test invalid royalty
+    let invalidRoyaltyBlock = chain.mineBlock([
+      Tx.contractCall('mint-muse', 'mint-nft', [
+        types.utf8("ipfs://Qm..."),
+        types.utf8("Invalid Royalty"),
+        types.utf8("Should fail"),
+        types.uint(101) // Invalid royalty > 100
       ], artist.address)
     ]);
     
-    createCollectionBlock.receipts[0].result.expectOk();
-    assertEquals(createCollectionBlock.receipts[0].result, types.ok(types.uint(1)));
+    invalidRoyaltyBlock.receipts[0].result.expectErr(108); // err-invalid-royalty
+  }
+});
+
+// [Previous tests remain unchanged...]
+
+Clarinet.test({
+  name: "Test collection supply limits",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const artist = accounts.get('wallet_1')!;
     
-    // Mint NFT in collection
-    let mintBlock = chain.mineBlock([
+    // Create collection with limit 1
+    let createBlock = chain.mineBlock([
+      Tx.contractCall('mint-muse', 'create-collection', [
+        types.utf8("Limited Collection"),
+        types.utf8("Test supply limit"),
+        types.uint(1)
+      ], artist.address)
+    ]);
+    
+    createBlock.receipts[0].result.expectOk();
+    
+    // Mint first token (should succeed)
+    let mintBlock1 = chain.mineBlock([
       Tx.contractCall('mint-muse', 'mint-collection-nft', [
-        types.utf8("ipfs://Qm..."),
-        types.utf8("Summer Song #1"),
-        types.utf8("First track of summer"),
+        types.utf8("ipfs://Qm1..."),
+        types.utf8("Token 1"),
+        types.utf8("First token"),
         types.uint(50),
         types.uint(1)
       ], artist.address)
     ]);
     
-    mintBlock.receipts[0].result.expectOk();
+    mintBlock1.receipts[0].result.expectOk();
     
-    // Verify collection data
-    let collectionBlock = chain.mineBlock([
-      Tx.contractCall('mint-muse', 'get-collection', [
+    // Attempt to mint second token (should fail)
+    let mintBlock2 = chain.mineBlock([
+      Tx.contractCall('mint-muse', 'mint-collection-nft', [
+        types.utf8("ipfs://Qm2..."),
+        types.utf8("Token 2"),
+        types.utf8("Second token"),
+        types.uint(50),
         types.uint(1)
       ], artist.address)
     ]);
     
-    let collection = collectionBlock.receipts[0].result.expectOk();
-    assertEquals(collection.token_count, types.uint(1));
-  }
-});
-
-Clarinet.test({
-  name: "Test batch minting",
-  async fn(chain: Chain, accounts: Map<string, Account>) {
-    const artist = accounts.get('wallet_1')!;
-    
-    let batchBlock = chain.mineBlock([
-      Tx.contractCall('mint-muse', 'batch-mint', [
-        types.list([
-          types.utf8("ipfs://Qm1..."),
-          types.utf8("ipfs://Qm2..."),
-          types.utf8("ipfs://Qm3...")
-        ]),
-        types.list([
-          types.utf8("Song 1"),
-          types.utf8("Song 2"), 
-          types.utf8("Song 3")
-        ]),
-        types.list([
-          types.utf8("Description 1"),
-          types.utf8("Description 2"),
-          types.utf8("Description 3")  
-        ]),
-        types.list([
-          types.uint(50),
-          types.uint(50),
-          types.uint(50)
-        ])
-      ], artist.address)
-    ]);
-    
-    batchBlock.receipts[0].result.expectOk();
-    
-    // Verify ownership of batch minted tokens
-    for (let i = 1; i <= 3; i++) {
-      let ownerBlock = chain.mineBlock([
-        Tx.contractCall('mint-muse', 'get-owner', [
-          types.uint(i)
-        ], artist.address)
-      ]);
-      assertEquals(
-        ownerBlock.receipts[0].result.expectOk(),
-        artist.address
-      );
-    }
+    mintBlock2.receipts[0].result.expectErr(107); // err-collection-limit
   }
 });

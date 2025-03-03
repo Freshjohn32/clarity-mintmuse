@@ -10,18 +10,23 @@
 (define-constant err-insufficient-funds (err u105))
 (define-constant err-invalid-collection (err u106))
 (define-constant err-collection-limit (err u107))
+(define-constant err-invalid-royalty (err u108))
+(define-constant err-invalid-input (err u109))
+(define-constant err-mint-failed (err u110))
 
 ;; Define NFT token
 (define-non-fungible-token mint-muse-nft uint)
 
-;; Data Variables 
+;; Data Variables
 (define-data-var token-id-nonce uint u0)
-(define-data-var platform-fee uint u25) ;; 2.5% fee in basis points
-(define-data-var collection-id-nonce uint u0)
 
-;; Data Maps
-(define-map token-uris {token-id: uint} {uri: (string-utf8 256)})
-(define-map token-metadata 
+;; Maps
+(define-map token-uris 
+    {token-id: uint} 
+    {uri: (string-utf8 256)}
+)
+
+(define-map token-metadata
     {token-id: uint}
     {
         creator: principal,
@@ -32,28 +37,19 @@
     }
 )
 
-(define-map collections
-    {collection-id: uint}
-    {
-        name: (string-utf8 64),
-        creator: principal,
-        description: (string-utf8 256),
-        token-count: uint,
-        max-supply: uint
-    }
+;; Helper Functions
+(define-private (validate-royalty (royalty-percent uint))
+  (and (>= royalty-percent u0) (<= royalty-percent u100))
 )
 
-(define-map token-listings
-    {token-id: uint}
-    {
-        price: uint,
-        seller: principal
-    }
-)
-
-;; Private Functions
-(define-private (is-token-owner (token-id uint) (user principal))
-    (is-eq user (unwrap! (nft-get-owner? mint-muse-nft token-id) false))
+(define-private (update-collection-count (collection-id uint))
+  (let ((collection (unwrap! (map-get? collections {collection-id: collection-id}) err-invalid-collection)))
+    (asserts! (< (get token-count collection) (get max-supply collection)) err-collection-limit)
+    (ok (map-set collections 
+        {collection-id: collection-id}
+        (merge collection {token-count: (+ (get token-count collection) u1)})
+    ))
+  )
 )
 
 (define-private (mint-single 
@@ -63,83 +59,32 @@
     (royalty-percent uint)
     (collection-id (optional uint))
 )
-    (let
-        (
-            (token-id (+ (var-get token-id-nonce) u1))
-        )
-        ;; Update collection if specified
-        (match collection-id collection-id-some
-            (let ((collection (unwrap! (map-get? collections {collection-id: collection-id-some}) err-invalid-collection)))
-                (asserts! (< (get token-count collection) (get max-supply collection)) err-collection-limit)
-                (map-set collections 
-                    {collection-id: collection-id-some}
-                    (merge collection {token-count: (+ (get token-count collection) u1)})
-                )
+    (begin
+        (asserts! (validate-royalty royalty-percent) err-invalid-royalty)
+        (let
+            ((token-id (+ (var-get token-id-nonce) u1)))
+            
+            ;; Update collection if specified
+            (match collection-id collection-id-some
+                (try! (update-collection-count collection-id-some))
+                true
             )
-            true
+            
+            (try! (nft-mint? mint-muse-nft token-id tx-sender))
+            (map-set token-uris {token-id: token-id} {uri: uri})
+            (map-set token-metadata 
+                {token-id: token-id}
+                {
+                    creator: tx-sender,
+                    royalty-percent: royalty-percent,
+                    title: title,
+                    description: description,
+                    collection-id: collection-id
+                }
+            )
+            (var-set token-id-nonce token-id)
+            (ok token-id)
         )
-        
-        (try! (nft-mint? mint-muse-nft token-id tx-sender))
-        (map-set token-uris {token-id: token-id} {uri: uri})
-        (map-set token-metadata 
-            {token-id: token-id}
-            {
-                creator: tx-sender,
-                royalty-percent: royalty-percent,
-                title: title,
-                description: description,
-                collection-id: collection-id
-            }
-        )
-        (var-set token-id-nonce token-id)
-        (ok token-id)
-    )
-)
-
-;; Public Functions
-(define-public (create-collection (name (string-utf8 64)) (description (string-utf8 256)) (max-supply uint))
-    (let
-        (
-            (collection-id (+ (var-get collection-id-nonce) u1))
-        )
-        (map-set collections
-            {collection-id: collection-id}
-            {
-                name: name,
-                creator: tx-sender,
-                description: description,
-                token-count: u0,
-                max-supply: max-supply
-            }
-        )
-        (var-set collection-id-nonce collection-id)
-        (ok collection-id)
-    )
-)
-
-(define-public (mint-nft (uri (string-utf8 256)) (title (string-utf8 64)) (description (string-utf8 256)) (royalty-percent uint))
-    (mint-single uri title description royalty-percent none)
-)
-
-(define-public (mint-collection-nft 
-    (uri (string-utf8 256)) 
-    (title (string-utf8 64)) 
-    (description (string-utf8 256)) 
-    (royalty-percent uint)
-    (collection-id uint)
-)
-    (mint-single uri title description royalty-percent (some collection-id))  
-)
-
-(define-public (batch-mint 
-    (uris (list 200 (string-utf8 256)))
-    (titles (list 200 (string-utf8 64)))
-    (descriptions (list 200 (string-utf8 256)))
-    (royalty-percents (list 200 uint))
-)
-    (let
-        ((entries (fold add-entry-to-result (list) uris titles descriptions royalty-percents)))
-        (ok entries)
     )
 )
 
@@ -148,19 +93,46 @@
     (title (string-utf8 64))
     (description (string-utf8 256))
     (royalty-percent uint)
-    (result (list 200 uint))
+    (acc (list 200 (response uint uint)))
 )
-    (unwrap-panic (mint-single uri title description royalty-percent none))
+    (append acc (list (mint-single uri title description royalty-percent none)))
 )
 
-;; Existing functions remain unchanged...
-;; [Previous list-nft, unlist-nft, buy-nft, transfer functions]
+(define-public (batch-mint 
+    (uris (list 200 (string-utf8 256)))
+    (titles (list 200 (string-utf8 64)))
+    (descriptions (list 200 (string-utf8 256)))
+    (royalty-percents (list 200 uint))
+)
+    (begin
+        (asserts! (and 
+            (is-eq (len uris) (len titles))
+            (is-eq (len titles) (len descriptions))
+            (is-eq (len descriptions) (len royalty-percents))
+        ) err-invalid-input)
+        (ok (fold add-entry-to-result 
+            uris titles descriptions royalty-percents 
+            (list)))
+    )
+)
 
-;; New read-only functions
-(define-read-only (get-collection (collection-id uint))
-    (ok (unwrap! (map-get? collections {collection-id: collection-id}) err-invalid-collection))
+;; Read-only functions
+(define-read-only (get-token-metadata (token-id uint))
+    (ok (unwrap! (map-get? token-metadata {token-id: token-id}) err-token-not-found))
 )
 
 (define-read-only (get-collection-tokens (collection-id uint))
-    (ok (unwrap! (map-get? collections {collection-id: collection-id}) err-invalid-collection))
+    (let ((collection (unwrap! (map-get? collections {collection-id: collection-id}) err-invalid-collection)))
+        (ok {
+            collection: collection,
+            tokens: (filter get-collection-token-ids (var-get token-id-nonce))
+        })
+    )
+)
+
+(define-private (get-collection-token-ids (token-id uint))
+    (match (get collection-id (unwrap! (map-get? token-metadata {token-id: token-id}) false))
+        target-id (is-some target-id)  ;; Fixed comparison
+        false
+    )
 )

@@ -12,11 +12,30 @@
 (define-constant err-collection-limit (err u107))
 (define-constant err-invalid-royalty (err u108))
 (define-constant err-invalid-input (err u109))
+(define-constant err-mint-failed (err u110))
 
 ;; Define NFT token
 (define-non-fungible-token mint-muse-nft uint)
 
-;; [Previous data variables and maps remain unchanged...]
+;; Data Variables
+(define-data-var token-id-nonce uint u0)
+
+;; Maps
+(define-map token-uris 
+    {token-id: uint} 
+    {uri: (string-utf8 256)}
+)
+
+(define-map token-metadata
+    {token-id: uint}
+    {
+        creator: principal,
+        royalty-percent: uint,
+        title: (string-utf8 64),
+        description: (string-utf8 256),
+        collection-id: (optional uint)
+    }
+)
 
 ;; Helper Functions
 (define-private (validate-royalty (royalty-percent uint))
@@ -69,7 +88,15 @@
     )
 )
 
-;; [Previous public functions remain unchanged...]
+(define-private (add-entry-to-result 
+    (uri (string-utf8 256))
+    (title (string-utf8 64))
+    (description (string-utf8 256))
+    (royalty-percent uint)
+    (acc (list 200 (response uint uint)))
+)
+    (append acc (list (mint-single uri title description royalty-percent none)))
+)
 
 (define-public (batch-mint 
     (uris (list 200 (string-utf8 256)))
@@ -83,11 +110,13 @@
             (is-eq (len titles) (len descriptions))
             (is-eq (len descriptions) (len royalty-percents))
         ) err-invalid-input)
-        (ok (fold add-entry-to-result uris titles descriptions royalty-percents (list)))
+        (ok (fold add-entry-to-result 
+            uris titles descriptions royalty-percents 
+            (list)))
     )
 )
 
-;; New read-only functions
+;; Read-only functions
 (define-read-only (get-token-metadata (token-id uint))
     (ok (unwrap! (map-get? token-metadata {token-id: token-id}) err-token-not-found))
 )
@@ -103,7 +132,7 @@
 
 (define-private (get-collection-token-ids (token-id uint))
     (match (get collection-id (unwrap! (map-get? token-metadata {token-id: token-id}) false))
-        target-id (is-eq target-id token-id)
+        target-id (is-some target-id)  ;; Fixed comparison
         false
     )
 )
